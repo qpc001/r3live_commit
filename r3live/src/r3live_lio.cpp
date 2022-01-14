@@ -53,6 +53,7 @@ void R3LIVE::imu_cbk( const sensor_msgs::Imu::ConstPtr &msg_in )
     double                timestamp = msg->header.stamp.toSec();
     g_camera_lidar_queue.imu_in( timestamp );
     mtx_buffer.lock();
+    // 检查时间戳是否往后跳
     if ( timestamp < last_timestamp_imu )
     {
         ROS_ERROR( "imu loop back, clear buffer" );
@@ -63,6 +64,7 @@ void R3LIVE::imu_cbk( const sensor_msgs::Imu::ConstPtr &msg_in )
 
     last_timestamp_imu = timestamp;
 
+    // 如果imu测量值是单位值，则需要修改这个变量，乘以重力常量
     if ( g_camera_lidar_queue.m_if_acc_mul_G )
     {
         msg->linear_acceleration.x *= G_m_s2;
@@ -70,10 +72,12 @@ void R3LIVE::imu_cbk( const sensor_msgs::Imu::ConstPtr &msg_in )
         msg->linear_acceleration.z *= G_m_s2;
     }
 
+    // 分别保存给lio和io
     imu_buffer_lio.push_back( msg );
     imu_buffer_vio.push_back( msg );
     // std::cout<<"got imu: "<<timestamp<<" imu size "<<imu_buffer_lio.size()<<std::endl;
     mtx_buffer.unlock();
+    // ???
     sig_buffer.notify_all();
 }
 
@@ -148,6 +152,12 @@ bool R3LIVE::get_pointcloud_data_from_ros_message( sensor_msgs::PointCloud2::Con
     }
 }
 
+/**
+ * @brief R3LIVE::sync_packages
+ * 将激光数据和IMU数据保存到MeasureGroup &meas
+ * @param meas
+ * @return
+ */
 bool R3LIVE::sync_packages( MeasureGroup &meas )
 {
     if ( lidar_buffer.empty() || imu_buffer_lio.empty() )
@@ -159,19 +169,22 @@ bool R3LIVE::sync_packages( MeasureGroup &meas )
     if ( !lidar_pushed )
     {
         meas.lidar.reset( new PointCloudXYZINormal() );
+        // 对lidar_buffer.front()的激光进行处理，然后保存到MeasureGroup的成员变量
         if ( get_pointcloud_data_from_ros_message( lidar_buffer.front(), *( meas.lidar ) ) == false )
         {
             return false;
         }
         // pcl::fromROSMsg(*(lidar_buffer.front()), *(meas.lidar));
+        // 记录激光扫描起始和结束时间,保存到MeasureGroup
         meas.lidar_beg_time = lidar_buffer.front()->header.stamp.toSec();
         lidar_end_time = meas.lidar_beg_time + meas.lidar->points.back().curvature / double( 1000 );
         meas.lidar_end_time = lidar_end_time;
         // printf("Input LiDAR time = %.3f, %.3f\n", meas.lidar_beg_time, meas.lidar_end_time);
         // printf_line_mem_MB;
+        // 设置标志位
         lidar_pushed = true;
     }
-
+    // 如果最新的imu时间戳落后于激光雷达，则无效，直接返回false
     if ( last_timestamp_imu < lidar_end_time )
     {
         return false;
@@ -180,15 +193,17 @@ bool R3LIVE::sync_packages( MeasureGroup &meas )
     /*** push imu data, and pop from imu buffer ***/
     double imu_time = imu_buffer_lio.front()->header.stamp.toSec();
     meas.imu.clear();
+    // 将时间戳<lidar_end_time的imu数据都保存到MeasureGroup的成员变量
     while ( ( !imu_buffer_lio.empty() ) && ( imu_time < lidar_end_time ) )
     {
         imu_time = imu_buffer_lio.front()->header.stamp.toSec();
-        if ( imu_time > lidar_end_time + 0.02 )
+        if ( imu_time > lidar_end_time + 0.02 ) // 如果imu时间 > lidar_end_time，也是可以被push进去的,如果IMU频率<50hz，会不会出问题?
             break;
         meas.imu.push_back( imu_buffer_lio.front() );
         imu_buffer_lio.pop_front();
     }
 
+    // 弹出激光
     lidar_buffer.pop_front();
     lidar_pushed = false;
     // if (meas.imu.empty()) return false;
@@ -463,18 +478,21 @@ void R3LIVE::feat_points_cbk( const sensor_msgs::PointCloud2::ConstPtr &msg_in )
 {
     sensor_msgs::PointCloud2::Ptr msg( new sensor_msgs::PointCloud2( *msg_in ) );
     msg->header.stamp = ros::Time( msg_in->header.stamp.toSec() - m_lidar_imu_time_delay );
+    // 检查雷达时间是否正确
     if ( g_camera_lidar_queue.lidar_in( msg_in->header.stamp.toSec() + 0.1 ) == 0 )
     {
         return;
     }
     mtx_buffer.lock();
     // std::cout<<"got feature"<<std::endl;
+    // 检查时间戳是否往前跳
     if ( msg->header.stamp.toSec() < last_timestamp_lidar )
     {
         ROS_ERROR( "lidar loop back, clear buffer" );
         lidar_buffer.clear();
     }
     // ROS_INFO("get point cloud at time: %.6f", msg->header.stamp.toSec());
+    // 保存
     lidar_buffer.push_back( msg );
     last_timestamp_lidar = msg->header.stamp.toSec();
     mtx_buffer.unlock();
@@ -517,15 +535,19 @@ int R3LIVE::service_LIO_update()
 
     for ( int i = 0; i < laserCloudNum; i++ )
     {
+        // ???
         featsArray[ i ].reset( new PointCloudXYZINormal() );
     }
 
+    // IMU处理模块
     std::shared_ptr< ImuProcess > p_imu( new ImuProcess() );
     m_imu_process = p_imu;
     //------------------------------------------------------------------------------------------------------
     ros::Rate rate( 5000 );
     bool      status = ros::ok();
+    // 将激光的buffer指针保存给g_camera_lidar_queue
     g_camera_lidar_queue.m_liar_frame_buf = &lidar_buffer;
+    // 设置g_lio_state状态协方差
     set_initial_state_cov( g_lio_state );
     while ( ros::ok() )
     {
@@ -533,6 +555,7 @@ int R3LIVE::service_LIO_update()
             break;
         ros::spinOnce();
         std::this_thread::sleep_for( std::chrono::milliseconds( 1 ) );
+        // 检查是否有可用的雷达数据用于处理，这里将等待图像的第一帧先处理，否则不往下继续
         while ( g_camera_lidar_queue.if_lidar_can_process() == false )
         {
             ros::spinOnce();
@@ -544,11 +567,14 @@ int R3LIVE::service_LIO_update()
         {
             // printf_line;
             Common_tools::Timer tim;
+            
+            // 将激光数据和IMU数据保存到MeasureGroup &meas
             if ( sync_packages( Measures ) == 0 )
             {
                 continue;
             }
             int lidar_can_update = 1;
+            // 上一帧激光扫描起始时间
             g_lidar_star_tim = frame_first_pt_time;
             if ( flg_reset )
             {

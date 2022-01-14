@@ -63,7 +63,7 @@ static const Eigen::Vector3d Lidar_offset_to_IMU(0.04165, 0.02326, -0.0284); // 
 struct Pose6D
 {
     typedef double data_type;
-    data_type offset_time;
+    data_type offset_time;  //已经使用的imu数据时间戳 - 点云扫描起始时间戳
     data_type rot[9];
     data_type acc[3];
     data_type vel[3];
@@ -167,12 +167,21 @@ struct Camera_Lidar_queue
     };
     ~Camera_Lidar_queue(){};
 
+    /**
+     * @brief imu_in
+     * 利用最新imu的时间戳来设置m_last_imu_time的值
+     * @param in_time
+     * @return
+     */
     double imu_in(const double in_time)
     {
+        // 如果m_first_imu_time还没有初始化
         if (m_first_imu_time < 0)
         {
+            // 进行初始化
             m_first_imu_time = in_time;
         }
+        // 取大值
         m_last_imu_time = std::max(in_time, m_last_imu_time);
         //m_last_imu_time = in_time;
         return m_last_imu_time;
@@ -262,30 +271,32 @@ struct Camera_Lidar_queue
         cout<< std::setprecision(15) <<  "Camera time = " << cam_last_time << ", LiDAR last time =  "<< lidar_last_time << endl;        
     }
 
+    // 检查是否有可用的雷达数据用于处理
     bool if_lidar_can_process()
     {
         // m_if_have_lidar_data = 1;
-        double cam_last_time = get_camera_front_time();
-        double lidar_last_time = get_lidar_front_time();
+        double cam_last_time = get_camera_front_time(); // 取上一次处理图像的时间戳，只有处理过图像，这个函数才会有值返回，否则返回默认值 -3e88
+        double lidar_last_time = get_lidar_front_time();    // 取激光最旧时间戳，只要激光buffer有数据，并且执行这个函数，m_last_lidar_time就会有值
         if (m_if_have_camera_data == 0)
         {
             return true;
         }
 
+        // 两个时间都还没有初始化，false
         if (cam_last_time < 0 || lidar_last_time < 0)
         {
             // cout << "Cam_tim = " << cam_last_time << ", lidar_last_time = " << lidar_last_time << endl; 
             return false;
         }
 
-
+        // 这里要求图像必须先被处理，否则就从这里return false
         if (lidar_last_time > cam_last_time)
         {
             // Camera data need process first.
             return false;
         }
         else
-        {
+        {   // 已经处理过一帧图像后，才会返回true
             // scope_color(ANSI_COLOR_BLUE_BOLD);
             // cout << "LiDAR can update, " << get_lidar_front_time() - m_first_imu_time << " | " << get_camera_front_time() - m_first_imu_time << endl;
             // printf_line;

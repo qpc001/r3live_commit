@@ -80,9 +80,11 @@ void ImuProcess::IMU_Initial( const MeasureGroup &meas, StatesGroup &state_inout
         cur_acc << imu_acc.x, imu_acc.y, imu_acc.z;
         cur_gyr << gyr_acc.x, gyr_acc.y, gyr_acc.z;
 
+        // 计算均值
         mean_acc += ( cur_acc - mean_acc ) / N;
         mean_gyr += ( cur_gyr - mean_gyr ) / N;
 
+        // 计算协方差
         cov_acc = cov_acc * ( N - 1.0 ) / N + ( cur_acc - mean_acc ).cwiseProduct( cur_acc - mean_acc ) * ( N - 1.0 ) / ( N * N );
         cov_gyr = cov_gyr * ( N - 1.0 ) / N + ( cur_gyr - mean_gyr ).cwiseProduct( cur_gyr - mean_gyr ) * ( N - 1.0 ) / ( N * N );
         // cov_acc = Eigen::Vector3d(0.1, 0.1, 0.1);
@@ -91,8 +93,10 @@ void ImuProcess::IMU_Initial( const MeasureGroup &meas, StatesGroup &state_inout
     }
 
     // TODO: fix the cov
+    // 这里又重新设置了两个协方差
     cov_acc = Eigen::Vector3d( COV_START_ACC_DIAG, COV_START_ACC_DIAG, COV_START_ACC_DIAG );
     cov_gyr = Eigen::Vector3d( COV_START_GYRO_DIAG, COV_START_GYRO_DIAG, COV_START_GYRO_DIAG );
+    // 设置初始值
     state_inout.gravity = Eigen::Vector3d( 0, 0, 9.805 );
     state_inout.rot_end = Eye3d;
     state_inout.bias_g = mean_gyr;
@@ -304,6 +308,13 @@ StatesGroup ImuProcess::imu_preintegration( const StatesGroup &state_in, std::de
     return state_inout;
 }
 
+/**
+ * @brief ImuProcess::lic_point_cloud_undistort
+ * 将激光点投影到该帧扫描结束时刻
+ * @param meas
+ * @param _state_inout
+ * @param pcl_out
+ */
 void ImuProcess::lic_point_cloud_undistort( const MeasureGroup &meas, const StatesGroup &_state_inout, PointCloudXYZINormal &pcl_out )
 {
     StatesGroup state_inout = _state_inout;
@@ -312,8 +323,10 @@ void ImuProcess::lic_point_cloud_undistort( const MeasureGroup &meas, const Stat
     const double &imu_end_time = v_imu.back()->header.stamp.toSec();
     const double &pcl_beg_time = meas.lidar_beg_time;
     /*** sort point clouds by offset time ***/
+    // 根据点云中的每个点的时间进行排序 (小到大)
     pcl_out = *( meas.lidar );
     std::sort( pcl_out.points.begin(), pcl_out.points.end(), time_list );
+    // 计算扫描结束时间
     const double &pcl_end_time = pcl_beg_time + pcl_out.points.back().curvature / double( 1000 );
     /*std::cout << "[ IMU Process ]: Process lidar from " << pcl_beg_time - g_lidar_star_tim << " to " << pcl_end_time- g_lidar_star_tim << ", "
               << meas.imu.size() << " imu msgs from " << imu_beg_time- g_lidar_star_tim << " to " << imu_end_time- g_lidar_star_tim
@@ -322,6 +335,9 @@ void ImuProcess::lic_point_cloud_undistort( const MeasureGroup &meas, const Stat
     /*** Initialize IMU pose ***/
     IMU_pose.clear();
     // IMUpose.push_back(set_pose6d(0.0, Zero3d, Zero3d, state.vel_end, state.pos_end, state.rot_end));
+    // acc_s_last: 前一帧imu加速度
+    // acc_s_last: 前一帧imu角速度
+    // state_inout: 当前状态
     IMU_pose.push_back( set_pose6d( 0.0, acc_s_last, angvel_last, state_inout.vel_end, state_inout.pos_end, state_inout.rot_end ) );
 
     /*** forward propagation at each imu point ***/
@@ -330,16 +346,20 @@ void ImuProcess::lic_point_cloud_undistort( const MeasureGroup &meas, const Stat
     Eigen::MatrixXd F_x( Eigen::Matrix< double, DIM_OF_STATES, DIM_OF_STATES >::Identity() );
     Eigen::MatrixXd cov_w( Eigen::Matrix< double, DIM_OF_STATES, DIM_OF_STATES >::Zero() );
     double          dt = 0;
+    // 遍历imu数据，不包括最后一个数据
     for ( auto it_imu = v_imu.begin(); it_imu != ( v_imu.end() - 1 ); it_imu++ )
     {
+        // 取当前数据和后一帧数据
         auto &&head = *( it_imu );
         auto &&tail = *( it_imu + 1 );
 
+        // 得到平均角速度、加速度
         angvel_avr << 0.5 * ( head->angular_velocity.x + tail->angular_velocity.x ), 0.5 * ( head->angular_velocity.y + tail->angular_velocity.y ),
             0.5 * ( head->angular_velocity.z + tail->angular_velocity.z );
         acc_avr << 0.5 * ( head->linear_acceleration.x + tail->linear_acceleration.x ),
             0.5 * ( head->linear_acceleration.y + tail->linear_acceleration.y ), 0.5 * ( head->linear_acceleration.z + tail->linear_acceleration.z );
 
+        // 减去bias
         angvel_avr -= state_inout.bias_g;
         acc_avr = acc_avr - state_inout.bias_a;
 
@@ -350,6 +370,7 @@ void ImuProcess::lic_point_cloud_undistort( const MeasureGroup &meas, const Stat
         /* covariance propagation */
 
         Eigen::Matrix3d acc_avr_skew;
+        // 旋转矢量转旋转矩阵
         Eigen::Matrix3d Exp_f = Exp( angvel_avr, dt );
         acc_avr_skew << SKEW_SYM_MATRIX( acc_avr );
 #ifdef DEBUG_PRINT
@@ -357,31 +378,37 @@ void ImuProcess::lic_point_cloud_undistort( const MeasureGroup &meas, const Stat
 #endif
 
         /* propagation of IMU attitude */
-        R_imu = R_imu * Exp_f;
+        R_imu = R_imu * Exp_f;  // 姿态更新
 
         /* Specific acceleration (global frame) of IMU */
-        acc_imu = R_imu * acc_avr - state_inout.gravity;
+        acc_imu = R_imu * acc_avr - state_inout.gravity;    // 得到导航坐标系下的加速度
 
         /* propagation of IMU */
-        pos_imu = pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt;
+        pos_imu = pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt; // 位置
 
         /* velocity of IMU */
-        vel_imu = vel_imu + acc_imu * dt;
+        vel_imu = vel_imu + acc_imu * dt;   // 速度
 
         /* save the poses at each IMU measurements */
+        // 保存当前加速度和角速度
         angvel_last = angvel_avr;
         acc_s_last = acc_imu;
+        // 计算 后一帧imu数据时间戳 - 点云扫描起始时间戳
         double &&offs_t = tail->header.stamp.toSec() - pcl_beg_time;
         // std::cout<<"acc "<<acc_imu.transpose()<<"vel "<<acc_imu.transpose()<<"vel "<<pos_imu.transpose()<<std::endl;
+        // 保存每个imu积分后的状态
         IMU_pose.push_back( set_pose6d( offs_t, acc_imu, angvel_avr, vel_imu, pos_imu, R_imu ) );
     }
 
     /*** calculated the pos and attitude prediction at the frame-end ***/
-    dt = pcl_end_time - imu_end_time;
+    dt = pcl_end_time - imu_end_time;   // 扫描结束时刻 - 最后一个imu时间戳 , 这里必须 pcl_end_time > imu_end_time ?
+    // 计算在pcl_end_time时刻下的状态
     state_inout.vel_end = vel_imu + acc_imu * dt;
     state_inout.rot_end = R_imu * Exp( angvel_avr, dt );
     state_inout.pos_end = pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt;
 
+    // Lidar_offset_to_IMU: 激光雷达在IMU坐标系的坐标
+    // pos_liD_e: 激光雷达在世界坐标系坐标
     Eigen::Vector3d pos_liD_e = state_inout.pos_end + state_inout.rot_end * Lidar_offset_to_IMU;
     // auto R_liD_e   = state_inout.rot_end * Lidar_R_to_IMU;
 
@@ -392,9 +419,11 @@ void ImuProcess::lic_point_cloud_undistort( const MeasureGroup &meas, const Stat
 #endif
 
     /*** undistort each lidar point (backward propagation) ***/
-    auto it_pcl = pcl_out.points.end() - 1;
+    auto it_pcl = pcl_out.points.end() - 1; // 从点云最后一个点开始
+    // 从IMU_pose最后一个数据开始
     for ( auto it_kp = IMU_pose.end() - 1; it_kp != IMU_pose.begin(); it_kp-- )
     {
+        // 取当前IMU_pose的前一个？？
         auto head = it_kp - 1;
         R_imu << MAT_FROM_ARRAY( head->rot );
         acc_imu << VEC_FROM_ARRAY( head->acc );
@@ -403,19 +432,34 @@ void ImuProcess::lic_point_cloud_undistort( const MeasureGroup &meas, const Stat
         pos_imu << VEC_FROM_ARRAY( head->pos );
         angvel_avr << VEC_FROM_ARRAY( head->gyr );
 
+        // 遍历点云
+        // 已经使用的imu数据时间戳 - 点云扫描起始时间戳
+        // it_pcl->curvature / double( 1000 ) 相对于扫描起始时刻的时间偏移
+        // 如果当前遍历点的时间 > 这个IMU_pose的时间，则使用 [这个IMU_pose的时间，扫描结束时刻]这一段的数据进行去畸变
         for ( ; it_pcl->curvature / double( 1000 ) > head->offset_time; it_pcl-- )
         {
+            // 计算 当前遍历点的时间 - 这个IMU_pose的时间
             dt = it_pcl->curvature / double( 1000 ) - head->offset_time;
 
             /* Transform to the 'end' frame, using only the rotation
              * Note: Compensation direction is INVERSE of Frame's moving direction
              * So if we want to compensate a point at timestamp-i to the frame-e
              * P_compensate = R_imu_e ^ T * (R_i * P_i + T_ei) where T_ei is represented in global frame */
+            // 向前积分，得到当前遍历点的时间 对应的 状态
             Eigen::Matrix3d R_i( R_imu * Exp( angvel_avr, dt ) );
+            // pos_liD_e: 扫描结束时刻，激光雷达在世界坐标系坐标
+            // pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt + R_i * Lidar_offset_to_IMU: 当前遍历点的时间 对应的激光雷达在世界坐标系坐标
+            // T_ei:
             Eigen::Vector3d T_ei( pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt + R_i * Lidar_offset_to_IMU - pos_liD_e );
 
             Eigen::Vector3d P_i( it_pcl->x, it_pcl->y, it_pcl->z );
+            // 由于出厂时Livox的激光坐标系和IMU坐标系可以认为旋转很小，这里直接使用IMU姿态R_i来代替激光的姿态 (ATTENTION!)
             Eigen::Vector3d P_compensate = state_inout.rot_end.transpose() * ( R_i * P_i + T_ei );
+
+            // P_compensate: 当前遍历点 投影到 扫描结束时刻下，该点在激光雷达坐标系的坐标
+            // state_inout.rot_end * P_compensate = R_i * P_i + T_ei
+            // 下面等号两侧均表示： 当前遍历点 投影到 扫描结束时刻下, 该点在世界坐标系的坐标
+            // state_inout.rot_end * P_compensate + pos_liD_e = R_i * P_i + (pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt + R_i * Lidar_offset_to_IMU)
 
             /// save Undistorted points and their rotation
             it_pcl->x = P_compensate( 0 );
@@ -440,6 +484,7 @@ void ImuProcess::Process( const MeasureGroup &meas, StatesGroup &stat, PointClou
     };
     ROS_ASSERT( meas.lidar != nullptr );
 
+    // IMU初始化
     if ( imu_need_init_ )
     {
         /// The very first lidar frame
@@ -447,8 +492,10 @@ void ImuProcess::Process( const MeasureGroup &meas, StatesGroup &stat, PointClou
 
         imu_need_init_ = true;
 
+        // 最新imu
         last_imu_ = meas.imu.back();
 
+        // imu数据量>20 ， 认为初始化完成
         if ( init_iter_num > MAX_INI_COUNT )
         {
             imu_need_init_ = false;
@@ -484,6 +531,7 @@ void ImuProcess::Process( const MeasureGroup &meas, StatesGroup &stat, PointClou
     }
     // t2 = omp_get_wtime();
 
+    // 保存上一次处理的最后一帧imu
     last_imu_ = meas.imu.back();
 
     // t3 = omp_get_wtime();

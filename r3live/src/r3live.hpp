@@ -419,6 +419,7 @@ public:
 
         m_lio_state_fp = fopen( std::string(m_map_output_dir).append("/lic_lio.log").c_str(), "w+");
         m_lio_costtime_fp = fopen(std::string(m_map_output_dir).append("/lic_lio_costtime.log").c_str(), "w+");
+        // 启动LIO线程
         m_thread_pool_ptr->commit_task(&R3LIVE::service_LIO_update, this);
              
     }

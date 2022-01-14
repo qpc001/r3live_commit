@@ -35,9 +35,10 @@ Eigen::Matrix<T, 3, 3> Exp(const Eigen::Matrix<T, 3, 1> &ang_vel, const Ts &dt)
 
     if (ang_vel_norm > 0.0000001)
     {
+        // 归一化
         Eigen::Matrix<T, 3, 1> r_axis = ang_vel / ang_vel_norm;
         Eigen::Matrix<T, 3, 3> K;
-
+        // 得到角速度反对称矩阵
         K << SKEW_SYM_MATRIX(r_axis);
 
         T r_ang = ang_vel_norm * dt;
