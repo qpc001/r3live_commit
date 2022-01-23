@@ -81,6 +81,9 @@ Eigen::Matrix<T,3,1> SO3_LOG(const Eigen::Matrix<T, 3, 3> &R)
     return (std::abs(theta) < 0.001) ? (0.5 * K) : (0.5 * theta / std::sin(theta) * K);
 }
 
+/**
+ * 计算欧拉角
+ */
 template<typename T>
 Eigen::Matrix<T, 3, 1> RotMtoEuler(const Eigen::Matrix<T, 3, 3> &rot)
 {

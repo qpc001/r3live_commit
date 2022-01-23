@@ -114,10 +114,14 @@ void ImuProcess::lic_state_propagate( const MeasureGroup &meas, StatesGroup &sta
     /*** sort point clouds by offset time ***/
     PointCloudXYZINormal pcl_out = *( meas.lidar );
     std::sort( pcl_out.points.begin(), pcl_out.points.end(), time_list );
+    // 获取扫描结束时刻时间戳
     const double &pcl_end_time = pcl_beg_time + pcl_out.points.back().curvature / double( 1000 );
+    // syncpack()的时候确保了 最后一个imu时间戳一定会在激光扫描结束时刻之前
     double        end_pose_dt = pcl_end_time - imu_end_time;
 
+    //
     state_inout = imu_preintegration( state_inout, v_imu, end_pose_dt );
+    // 保存最后一帧imu，用于下一次的时候push_front
     last_imu_ = meas.imu.back();
 }
 
@@ -160,8 +164,10 @@ std::mutex g_imu_premutex;
 
 StatesGroup ImuProcess::imu_preintegration( const StatesGroup &state_in, std::deque< sensor_msgs::Imu::ConstPtr > &v_imu, double end_pose_dt )
 {
+    // 为啥要加锁?
     std::unique_lock< std::mutex > lock( g_imu_premutex );
     StatesGroup                    state_inout = state_in;
+    // 检查速度
     if ( check_state( state_inout ) )
     {
         state_inout.display( state_inout, "state_inout" );
@@ -180,15 +186,18 @@ StatesGroup ImuProcess::imu_preintegration( const StatesGroup &state_in, std::de
     //        v_imu.back()->header.stamp.toSec() - g_lidar_star_tim,
     //        state_in.last_update_time - g_lidar_star_tim,
     //        state_in.last_update_time - v_imu.front()->header.stamp.toSec());
+    // 遍历Imu,不包括最后一帧imu数据
     for ( std::deque< sensor_msgs::Imu::ConstPtr >::iterator it_imu = v_imu.begin(); it_imu != ( v_imu.end() - 1 ); it_imu++ )
     {
         // if(g_lidar_star_tim == 0 || state_inout.last_update_time == 0)
         // {
         //   return state_inout;
         // }
+        // 取两帧imu
         sensor_msgs::Imu::ConstPtr head = *( it_imu );
         sensor_msgs::Imu::ConstPtr tail = *( it_imu + 1 );
 
+        // 求平均，然后减去bias
         angvel_avr << 0.5 * ( head->angular_velocity.x + tail->angular_velocity.x ), 0.5 * ( head->angular_velocity.y + tail->angular_velocity.y ),
             0.5 * ( head->angular_velocity.z + tail->angular_velocity.z );
         acc_avr << 0.5 * ( head->linear_acceleration.x + tail->linear_acceleration.x ),
@@ -198,11 +207,13 @@ StatesGroup ImuProcess::imu_preintegration( const StatesGroup &state_in, std::de
 
         acc_avr = acc_avr - state_inout.bias_a;
 
+        // 检查时间，如果位于一帧的imu时间小于 上一次优化状态的时间，则表示imu数据无效
         if ( tail->header.stamp.toSec() < state_inout.last_update_time )
         {
             continue;
         }
 
+        // 计算前向积分时间dt
         if ( if_first_imu )
         {
             if_first_imu = 0;
@@ -252,10 +263,11 @@ StatesGroup ImuProcess::imu_preintegration( const StatesGroup &state_in, std::de
 
         state_inout.cov = F_x * state_inout.cov * F_x.transpose() + cov_w;
 
-        R_imu = R_imu * Exp_f;
-        acc_imu = R_imu * acc_avr - state_inout.gravity;
-        pos_imu = pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt;
-        vel_imu = vel_imu + acc_imu * dt;
+        // 状态更新
+        R_imu = R_imu * Exp_f;                                              //姿态
+        acc_imu = R_imu * acc_avr - state_inout.gravity;                    //加速度
+        pos_imu = pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt;         //位置
+        vel_imu = vel_imu + acc_imu * dt;                                   //速度
         angvel_last = angvel_avr;
         acc_s_last = acc_imu;
 
@@ -270,6 +282,7 @@ StatesGroup ImuProcess::imu_preintegration( const StatesGroup &state_in, std::de
 
     // cout <<__FILE__ << ", " << __LINE__ <<" ,diagnose lio_state = " << std::setprecision(2) <<(state_inout - StatesGroup()).transpose() << endl;
     /*** calculated the pos and attitude prediction at the frame-end ***/
+    // 继续推算，直到 激光扫描结束时刻
     dt = end_pose_dt;
 
     state_inout.last_update_time = v_imu.back()->header.stamp.toSec() + dt;
@@ -283,6 +296,7 @@ StatesGroup ImuProcess::imu_preintegration( const StatesGroup &state_in, std::de
         }
         dt = 0.1;
     }
+    // 将状态保存给state_inout
     state_inout.vel_end = vel_imu + acc_imu * dt;
     state_inout.rot_end = R_imu * Exp( angvel_avr, dt );
     state_inout.pos_end = pos_imu + vel_imu * dt + 0.5 * acc_imu * dt * dt;
@@ -521,6 +535,7 @@ void ImuProcess::Process( const MeasureGroup &meas, StatesGroup &stat, PointClou
     {
         if ( 1 )
         {
+            // 畸变矫正, 将激光点投影到该帧扫描结束时刻
             lic_point_cloud_undistort( meas, stat, *cur_pcl_un_ );
         }
         else

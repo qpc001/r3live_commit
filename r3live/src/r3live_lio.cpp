@@ -272,6 +272,7 @@ bool R3LIVE::if_corner_in_FOV( Eigen::Vector3f cube_p )
     return ( ( ang_cos > HALF_FOV_COS ) ? true : false );
 }
 
+// ???
 void R3LIVE::lasermap_fov_segment()
 {
     laserCloudValidNum = 0;
@@ -592,8 +593,10 @@ int R3LIVE::service_LIO_update()
             pca_time = 0;
             svd_time = 0;
             t0 = omp_get_wtime();
+            // 去畸变、状态推算(完成预测步骤)
             p_imu->Process( Measures, g_lio_state, feats_undistort );
 
+            // ???
             g_camera_lidar_queue.g_noise_cov_acc = p_imu->cov_acc;
             g_camera_lidar_queue.g_noise_cov_gyro = p_imu->cov_gyr;
             StatesGroup state_propagate( g_lio_state );
@@ -606,6 +609,7 @@ int R3LIVE::service_LIO_update()
                 continue;
             }
 
+            // 如果  Measures.lidar_beg_time < frame_first_pt_time，表示正在初始化
             if ( ( Measures.lidar_beg_time - frame_first_pt_time ) < INIT_TIME )
             {
                 flg_EKF_inited = false;
@@ -624,14 +628,18 @@ int R3LIVE::service_LIO_update()
                       << g_lio_state.vel_end.transpose() << " " << g_lio_state.bias_g.transpose() << " " << g_lio_state.bias_a.transpose()
                       << std::endl;
 #endif
+            //
             lasermap_fov_segment();
+            // 降采样
             downSizeFilterSurf.setInputCloud( feats_undistort );
             downSizeFilterSurf.filter( *feats_down );
             // cout <<"Preprocess cost time: " << tim.toc("Preprocess") << endl;
             /*** initialize the map kdtree ***/
+            // 如果ikdtree.Root_Node为空，表示地图还没出初始化
             if ( ( feats_down->points.size() > 1 ) && ( ikdtree.Root_Node == nullptr ) )
             {
                 // std::vector<PointType> points_init = feats_down->points;
+                // 构建ikdtree
                 ikdtree.set_downsample_param( filter_size_map_min );
                 ikdtree.Build( feats_down->points );
                 flg_map_initialized = true;
@@ -653,13 +661,15 @@ int R3LIVE::service_LIO_update()
             PointCloudXYZINormal::Ptr feats_down_updated( new PointCloudXYZINormal( *feats_down ) );
             std::vector< double >     res_last( feats_down_size, 1000.0 ); // initial
 
-            if ( featsFromMapNum >= 5 )
+            if ( featsFromMapNum >= 5 ) // 地图点要>5个
             {
                 t1 = omp_get_wtime();
 
                 if ( m_if_publish_feature_map )
                 {
+                    // 清空ikdtree.PCL_Storage
                     PointVector().swap( ikdtree.PCL_Storage );
+                    // 递归填充ikdtree.PCL_Storage
                     ikdtree.flatten( ikdtree.Root_Node, ikdtree.PCL_Storage, NOT_RECORD );
                     featsFromMap->clear();
                     featsFromMap->points = ikdtree.PCL_Storage;
@@ -684,14 +694,16 @@ int R3LIVE::service_LIO_update()
                 t2 = omp_get_wtime();
                 double maximum_pt_range = 0.0;
                 // cout <<"Preprocess 2 cost time: " << tim.toc("Preprocess") << endl;
+                // 开始迭代
                 for ( iterCount = 0; iterCount < NUM_MAX_ITERATIONS; iterCount++ )
                 {
                     tim.tic( "Iter" );
                     match_start = omp_get_wtime();
                     laserCloudOri->clear();
-                    coeffSel->clear();
+                    coeffSel->clear();  // 清空系数vector
 
                     /** closest surface search and residual computation **/
+                    // 遍历降采样后的平面点云
                     for ( int i = 0; i < feats_down_size; i += m_lio_update_point_step )
                     {
                         double     search_start = omp_get_wtime();
@@ -699,16 +711,19 @@ int R3LIVE::service_LIO_update()
                         double     ori_pt_dis =
                             sqrt( pointOri_tmpt.x * pointOri_tmpt.x + pointOri_tmpt.y * pointOri_tmpt.y + pointOri_tmpt.z * pointOri_tmpt.z );
                         maximum_pt_range = std::max( ori_pt_dis, maximum_pt_range );
+                        // 取点云中的一个点的引用
                         PointType &pointSel_tmpt = feats_down_updated->points[ i ];
 
                         /* transform to world frame */
                         pointBodyToWorld( &pointOri_tmpt, &pointSel_tmpt );
                         std::vector< float > pointSearchSqDis_surf;
 
-                        auto &points_near = Nearest_Points[ i ];
+                        auto &points_near = Nearest_Points[ i ];    // 取引用
 
+                        // 第一次迭代 或者 重匹配标志rematch_en为true
                         if ( iterCount == 0 || rematch_en )
                         {
+                            // 使用ikdtree查找5个最近的点
                             point_selected_surf[ i ] = true;
                             /** Find the closest surfaces in the map **/
                             ikdtree.Nearest_Search( pointSel_tmpt, NUM_MATCH_POINTS, points_near, pointSearchSqDis_surf );
@@ -738,7 +753,7 @@ int R3LIVE::service_LIO_update()
                             matA0.at< float >( j, 1 ) = points_near[ j ].y;
                             matA0.at< float >( j, 2 ) = points_near[ j ].z;
                         }
-
+                        // 求平面方程
                         cv::solve( matA0, matB0, matX0, cv::DECOMP_QR ); // TODO
 
                         float pa = matX0.at< float >( 0, 0 );
@@ -746,12 +761,14 @@ int R3LIVE::service_LIO_update()
                         float pc = matX0.at< float >( 2, 0 );
                         float pd = 1;
 
+                        // 归一化
                         float ps = sqrt( pa * pa + pb * pb + pc * pc );
                         pa /= ps;
                         pb /= ps;
                         pc /= ps;
                         pd /= ps;
 
+                        // 平面校验
                         bool planeValid = true;
                         for ( int j = 0; j < NUM_MATCH_POINTS; j++ )
                         {
@@ -772,7 +789,9 @@ int R3LIVE::service_LIO_update()
 
                         if ( planeValid )
                         {
+                            // 点到平面距离（作为残差）
                             float pd2 = pa * pointSel_tmpt.x + pb * pointSel_tmpt.y + pc * pointSel_tmpt.z + pd;
+                            // 计算权重
                             float s = 1 - 0.9 * fabs( pd2 ) /
                                               sqrt( sqrt( pointSel_tmpt.x * pointSel_tmpt.x + pointSel_tmpt.y * pointSel_tmpt.y +
                                                           pointSel_tmpt.z * pointSel_tmpt.z ) );
@@ -787,6 +806,7 @@ int R3LIVE::service_LIO_update()
                                 //     continue;
                                 // }
                                 point_selected_surf[ i ] = true;
+                                // 保存系数
                                 coeffSel_tmpt->points[ i ].x = pa;
                                 coeffSel_tmpt->points[ i ].y = pb;
                                 coeffSel_tmpt->points[ i ].z = pc;
@@ -804,6 +824,7 @@ int R3LIVE::service_LIO_update()
                     double total_residual = 0.0;
                     laserCloudSelNum = 0;
 
+                    // 筛选残差方程系数
                     for ( int i = 0; i < coeffSel_tmpt->points.size(); i++ )
                     {
                         if ( point_selected_surf[ i ] && ( res_last[ i ] <= 2.0 ) )
@@ -820,13 +841,16 @@ int R3LIVE::service_LIO_update()
                     solve_start = omp_get_wtime();
 
                     /*** Computation of Measuremnt Jacobian matrix H and measurents vector ***/
-                    Eigen::MatrixXd Hsub( laserCloudSelNum, 6 );
+                    Eigen::MatrixXd Hsub( laserCloudSelNum, 6 );    //H 矩阵?  [laserCloudSelNum x 6]
                     Eigen::VectorXd meas_vec( laserCloudSelNum );
                     Hsub.setZero();
 
+                    // 遍历筛选过的残差方程
                     for ( int i = 0; i < laserCloudSelNum; i++ )
                     {
+                        // 取当前扫描对应的点
                         const PointType &laser_p = laserCloudOri->points[ i ];
+                        // 将点从激光坐标系转换到IMU坐标系
                         Eigen::Vector3d  point_this( laser_p.x, laser_p.y, laser_p.z );
                         point_this += Lidar_offset_to_IMU;
                         Eigen::Matrix3d point_crossmat;
@@ -834,9 +858,16 @@ int R3LIVE::service_LIO_update()
 
                         /*** get the normal vector of closest surface/corner ***/
                         const PointType &norm_p = coeffSel->points[ i ];
+                        // 取对应的平面法向量
                         Eigen::Vector3d  norm_vec( norm_p.x, norm_p.y, norm_p.z );
 
                         /*** calculate the Measuremnt Jacobian matrix H ***/
+                        // d(f)/d(delta x) = d(f)/d(p_{proj}) * d(p_{proj})/d(delta x)
+                        // 其中：d(f)/d(p_{proj}) 表示残差对转换后的点的雅可比 （其实就是平面法向量）
+                        //      d(p_{proj})/d(delta x) 表示转换后的点对误差状态量的雅可比
+                        // (A*B)^{T} = B^T A^T
+                        // 1x3 * 3x3 * 3x3 =  1x3   ==> 转置一下  3x1 = [p]x * R^T * n
+                        // (n^T * R * -[p]x)  这是原本链式求导得到的 1x3 雅可比
                         Eigen::Vector3d A( point_crossmat * g_lio_state.rot_end.transpose() * norm_vec );
                         Hsub.row( i ) << VEC_FROM_ARRAY( A ), norm_p.x, norm_p.y, norm_p.z;
 
