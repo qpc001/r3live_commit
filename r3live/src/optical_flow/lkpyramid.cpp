@@ -638,6 +638,13 @@ void LK_optical_flow_kernel::allocate_img_deriv_memory(std::vector<Mat> &img_pyr
     }
 }
 
+/**
+ * @brief LK_optical_flow_kernel::calc_image_deriv_Sharr
+ * 计算图像金字塔梯度？
+ * @param img_pyr
+ * @param img_pyr_deriv_I
+ * @param img_pyr_deriv_I_buff
+ */
 void LK_optical_flow_kernel::calc_image_deriv_Sharr(std::vector<cv::Mat> &img_pyr,
                                                     std::vector<cv::Mat> &img_pyr_deriv_I,
                                                     std::vector<cv::Mat> &img_pyr_deriv_I_buff)
@@ -772,12 +779,17 @@ int LK_optical_flow_kernel::track_image(const cv::Mat &curr_img, const std::vect
     // Common_tools::Timer tim;
     // tim.tic();
     // printf_line;
+
+    // 利用输入图像构建图像金字塔
     m_maxLevel = opencv_buildOpticalFlowPyramid(curr_img, m_curr_img_pyr, m_lk_win_size, m_maxLevel, false);
+    // 输入图像金字塔，计算梯度？
     calc_image_deriv_Sharr(m_curr_img_pyr, m_curr_img_deriv_I, m_curr_img_deriv_I_buff);
+    // 如果是第一帧图像，那么进入下面
     if (m_prev_img_pyr.size() == 0 || (m_prev_img_pyr[0].cols == 0)) // The first img
     {
         m_prev_img_pyr.resize(m_curr_img_pyr.size());
         allocate_img_deriv_memory(m_curr_img_pyr, m_prev_img_deriv_I, m_prev_img_deriv_I_buff);
+        // 交换图像金字塔及其梯度
         swap_image_buffer();
         curr_tracked_pts = last_tracked_pts;
         return 0;

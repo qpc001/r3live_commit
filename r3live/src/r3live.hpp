@@ -234,7 +234,7 @@ public:
     std::deque<sensor_msgs::ImageConstPtr> m_queue_image_msg;
     std::deque<std::shared_ptr<Image_frame>> m_queue_image_with_pose;
     std::list<std::shared_ptr<Image_frame>> g_image_vec;
-    Eigen::Matrix3d g_cam_K;
+    Eigen::Matrix3d g_cam_K;    ///< 相机内参矩阵
     Eigen::Matrix<double, 5, 1> g_cam_dist;
     double m_vio_scale_factor = 1.0;
     cv::Mat m_ud_map1, m_ud_map2;
@@ -254,7 +254,7 @@ public:
     int m_if_estimate_i2c_extrinsic = 1;
     int m_if_estimate_intrinsic = 1;
     double m_control_image_freq =  100; 
-    int m_maximum_vio_tracked_pts = 300;
+    int m_maximum_vio_tracked_pts = 300;    ///< 最大跟踪特征点数
     int m_lio_update_point_step = 1;
     int m_append_global_map_point_step = 1;
     int m_pub_pt_minimum_views = 5;

@@ -214,6 +214,11 @@ struct Camera_Lidar_queue
         return 1;
     }
 
+    /**
+     * @brief get_lidar_front_time
+     * 取lidar buffer中最旧扫描的时间， +0.1是获取扫描结束时刻的时间
+     * @return
+     */
     double get_lidar_front_time()
     {
         if (m_liar_frame_buf != nullptr && m_liar_frame_buf->size())
@@ -232,13 +237,19 @@ struct Camera_Lidar_queue
         return m_last_visual_time + m_camera_imu_td;
     }
 
+    /**
+     * @brief if_camera_can_process
+     * 当雷达有数据，并且lidar buffer中最旧的雷达数据时间 > 当前正在处理的图像时间戳，则返回true，
+     * 否则，先处理lidar buffer中时间戳小于当前正在处理的图像时间戳的雷达数据
+     * @return
+     */
     bool if_camera_can_process()
     {
         m_if_have_camera_data = 1;
-        double cam_last_time = get_camera_front_time();
-        double lidar_last_time = get_lidar_front_time();
+        double cam_last_time = get_camera_front_time(); // 取当前正在处理的图像帧的时间（加上了正在估计的时间偏移）
+        double lidar_last_time = get_lidar_front_time(); // 取lidar buffer中最旧扫描的时间（扫描结束时刻）
 
-        if (m_if_have_lidar_data != 1)
+        if (m_if_have_lidar_data != 1)  // 如果还没有收到任何lidar数据？ 不可能进入到这里来吧？
         {
             return true;
         }
@@ -248,7 +259,7 @@ struct Camera_Lidar_queue
             return false;
         }
 
-        if (lidar_last_time <= cam_last_time)
+        if (lidar_last_time <= cam_last_time)   // 如果雷达时间 < 图像时间， 即有比较新的雷达数据还没处理，需要先处理雷达数据
         {
             // LiDAR data need process first.
             // return true;

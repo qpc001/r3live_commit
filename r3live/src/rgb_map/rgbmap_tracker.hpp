@@ -78,9 +78,10 @@ class Rgbmap_tracker
     unsigned int               m_maximum_vio_tracked_pts = 300;
     cv::Mat                    m_ud_map1, m_ud_map2;
     cv::Mat                    m_intrinsic, m_dist_coeffs;
-    std::vector< cv::Point2f > m_last_tracked_pts, m_current_tracked_pts;
+    std::vector< cv::Point2f > m_last_tracked_pts, m_current_tracked_pts;   ///< 跟踪像素点坐标
     std::vector< cv::Scalar >  m_colors;
-    std::vector< void * >      m_rgb_pts_ptr_vec_in_last_frame;
+    std::vector< void * >      m_rgb_pts_ptr_vec_in_last_frame; ///< 每个元素都是[地图点内存地址]
+    // key = [地图点内存地址]  value = [地图点反投影到图像的像素点坐标]
     std::map< void *, cv::Point2f > m_map_rgb_pts_in_last_frame_pos;
     std::map< void *, cv::Point2f > m_map_rgb_pts_in_current_frame_pos;
 
@@ -101,15 +102,26 @@ class Rgbmap_tracker
         initUndistortRectifyMap( m_intrinsic, m_dist_coeffs, cv::Mat(), m_intrinsic, imageSize, CV_16SC2, m_ud_map1, m_ud_map2 );
     }
 
+    /**
+     * @brief update_last_tracking_vector_and_ids
+     * 遍历m_map_rgb_pts_in_last_frame_pos容器，利用新数据更新如下容器:
+     * - m_last_tracked_pts
+     * - m_rgb_pts_ptr_vec_in_last_frame
+     * - m_colors
+     * - m_old_ids
+     */
     void update_last_tracking_vector_and_ids()
     {
         int idx = 0;
+        // 清空几个容器
         m_last_tracked_pts.clear();
         m_rgb_pts_ptr_vec_in_last_frame.clear();
         m_colors.clear();
         m_old_ids.clear();
+        // 遍历m_map_rgb_pts_in_last_frame_pos容器
         for ( auto it = m_map_rgb_pts_in_last_frame_pos.begin(); it != m_map_rgb_pts_in_last_frame_pos.end(); it++ )
         {
+            // 将新数据保存到以下几个容器
             m_rgb_pts_ptr_vec_in_last_frame.push_back( it->first );
             m_last_tracked_pts.push_back( it->second );
             m_colors.push_back( ( ( RGB_pts * ) it->first )->m_dbg_color );
@@ -118,24 +130,45 @@ class Rgbmap_tracker
         }
     }
 
+    /**
+     * @brief set_track_pts
+     * 只有在init()时被调用
+     * @param img
+     * @param rgb_pts_vec
+     * @param pts_proj_img_vec
+     */
     void set_track_pts( cv::Mat &img, std::vector< std::shared_ptr< RGB_pts > > &rgb_pts_vec, std::vector< cv::Point2f > &pts_proj_img_vec )
     {
+        // 拷贝图像到m_old_frame
         m_old_frame = img.clone();
+        // 转成灰度图
         cv::cvtColor( m_old_frame, m_old_gray, cv::COLOR_BGR2GRAY );
+        // 保存 [地图点——反投影到图像的像素点坐标]
         m_map_rgb_pts_in_last_frame_pos.clear();
         for ( unsigned int i = 0; i < rgb_pts_vec.size(); i++ )
         {
+            // m_map_rgb_pts_in_last_frame_pos[地图点内存地址] = 地图点反投影到图像的像素点坐标
             m_map_rgb_pts_in_last_frame_pos[ ( void * ) rgb_pts_vec[ i ].get() ] = pts_proj_img_vec[ i ];
         }
+        //
         update_last_tracking_vector_and_ids();
     }
 
+    /**
+     * @brief init
+     * 初始化
+     * @param img_with_pose 输入图像和pose
+     * @param rgb_pts_vec   输入地图点
+     * @param pts_proj_img_vec 输入对应的图像上的像素点
+     */
     void init( const std::shared_ptr< Image_frame > &img_with_pose, std::vector< std::shared_ptr< RGB_pts > > &rgb_pts_vec, std::vector< cv::Point2f > &pts_proj_img_vec )
     {
+        // 将初始化时筛选的地图点——反投影像素坐标保存到m_map_rgb_pts_in_last_frame_pos容器，同时更新其他几个容器
         set_track_pts( img_with_pose->m_img, rgb_pts_vec, pts_proj_img_vec );
         m_current_frame_time = img_with_pose->m_timestamp;
         m_last_frame_time = m_current_frame_time;
         std::vector< uchar > status;
+        // 由于这里是初始化，因此在track_image函数中，只运行到swap数据到prev的几个容器中（即初始化图像金字塔、梯度等），用于下一次的光流跟踪
         m_lk_optical_flow_kernel->track_image( img_with_pose->m_img_gray, m_last_tracked_pts, m_current_tracked_pts, status );
     }
 

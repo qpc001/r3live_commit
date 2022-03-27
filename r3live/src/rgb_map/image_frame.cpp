@@ -129,6 +129,16 @@ void Image_frame::inverse_pose()
     m_pose_c2w_t = -(m_pose_w2c_q.inverse() * m_pose_w2c_t);
 }
 
+/**
+ * @brief Image_frame::project_3d_to_2d
+ * 输入3D点，先变换到相机坐标系，然后归一化平面，然后投影到图像上，得到 u,v输出
+ * @param in_pt
+ * @param cam_K
+ * @param u
+ * @param v
+ * @param scale
+ * @return
+ */
 bool Image_frame::project_3d_to_2d(const pcl::PointXYZI & in_pt, Eigen::Matrix3d &cam_K, double &u, double &v, const double &scale)
 {
     if (!m_if_have_set_pose)
@@ -148,11 +158,14 @@ bool Image_frame::project_3d_to_2d(const pcl::PointXYZI & in_pt, Eigen::Matrix3d
 
     vec_3 pt_w(in_pt.x, in_pt.y, in_pt.z), pt_cam;
     // pt_cam = (m_pose_w2c_q.inverse() * pt_w - m_pose_w2c_q.inverse()*m_pose_w2c_t);
+    // 将世界坐标系的点转换到相机坐标系
     pt_cam = (m_pose_c2w_q * pt_w + m_pose_c2w_t);
+    // 去除深度太小或为负值的点
     if (pt_cam(2) < 0.001)
     {
         return false;
     }
+    // 投影到归一化平面，然后投影到相机平面，得到 u,v
     u = (pt_cam(0) * fx / pt_cam(2) + cx) * scale;
     v = (pt_cam(1) * fy / pt_cam(2) + cy) * scale;
     return true;
@@ -293,6 +306,10 @@ inline cv::Mat equalize_color_image_Ycrcb(cv::Mat &image)
     return hist_equalized_image;
 }
 
+/**
+ * @brief Image_frame::image_equalize
+ * 内部使用opencv自适应直方图均衡
+ */
 void Image_frame::image_equalize()
 {
     image_equalize(m_img_gray, 3.0);
@@ -301,6 +318,16 @@ void Image_frame::image_equalize()
     // cv::imshow("After", m_img.clone());
 }
 
+/**
+ * @brief Image_frame::project_3d_point_in_this_img
+ * 根据this对应的pose，将输入3D点转换到图像上，并输出带颜色的3D空间点
+ * @param in_pt
+ * @param u
+ * @param v
+ * @param rgb_pt
+ * @param intrinsic_scale
+ * @return
+ */
 bool Image_frame::project_3d_point_in_this_img(const pcl::PointXYZI & in_pt, double &u, double &v, pcl::PointXYZRGB *rgb_pt, double intrinsic_scale)
 {
     if (project_3d_to_2d(in_pt, m_cam_K, u, v, intrinsic_scale) == false)
@@ -312,6 +339,7 @@ bool Image_frame::project_3d_point_in_this_img(const pcl::PointXYZI & in_pt, dou
         // printf_line;
         return false;
     }
+    // 如果成功投影到图像平面且输入的rgb_pt不为空，则从图像中提取颜色，保存到rgb_pt
     if (rgb_pt != nullptr)
     {
         int r = 0;

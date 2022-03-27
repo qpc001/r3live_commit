@@ -499,6 +499,16 @@ void Global_map::render_with_a_image(std::shared_ptr<Image_frame> &img_ptr, int 
     render_pts_in_voxels(img_ptr, pts_for_render);
 }
 
+/**
+ * @brief Global_map::selection_points_for_projection
+ * 从全局地图中挑选一些点出来，保存到pc_out_vec，pc_2d_out_vec
+ * @param image_pose
+ * @param pc_out_vec [输出] 选中的地图点
+ * @param pc_2d_out_vec [输出] 选中的地图点反投影到图像上的坐标
+ * @param minimum_dis
+ * @param skip_step 步长，用于跳过一些点
+ * @param use_all_pts
+ */
 void Global_map::selection_points_for_projection(std::shared_ptr<Image_frame> &image_pose, std::vector<std::shared_ptr<RGB_pts>> *pc_out_vec,
                                                             std::vector<cv::Point2f> *pc_2d_out_vec, double minimum_dis,
                                                             int skip_step,
@@ -506,6 +516,7 @@ void Global_map::selection_points_for_projection(std::shared_ptr<Image_frame> &i
 {
     Common_tools::Timer tim;
     tim.tic();
+    // 清空输出
     if (pc_out_vec != nullptr)
     {
         pc_out_vec->clear();
@@ -527,16 +538,20 @@ void Global_map::selection_points_for_projection(std::shared_ptr<Image_frame> &i
     int blk_rej = 0;
     // int pts_size = m_rgb_pts_vec.size();
     std::vector<std::shared_ptr<RGB_pts>> pts_for_projection;
+    // 取最近有点击中过的voxel
     m_mutex_m_box_recent_hitted->lock();
     std::unordered_set< std::shared_ptr< RGB_Voxel > > boxes_recent_hitted = m_voxels_recent_visited;
     m_mutex_m_box_recent_hitted->unlock();
-    if ( (!use_all_pts) && boxes_recent_hitted.size())
+    if ( (!use_all_pts) && boxes_recent_hitted.size())  // 如果不使用全部点 ， 且存在最近击中过的voxel
     {
+        // 对boxes_recent_hitted内的元素加锁，因为元素是指针
         m_mutex_rgb_pts_in_recent_hitted_boxes->lock();
         
+        // 遍历最近击中过的voxel
         for(Voxel_set_iterator it = boxes_recent_hitted.begin(); it != boxes_recent_hitted.end(); it++)
         {
             // pts_for_projection.push_back( (*it)->m_pts_in_grid.back() );
+            // 将最新集中该voxel的点保存到pts_for_projection容器，因为是用于跟踪，所以用最新的点？
             if ( ( *it )->m_pts_in_grid.size() )
             {
                  pts_for_projection.push_back( (*it)->m_pts_in_grid.back() );
@@ -549,12 +564,17 @@ void Global_map::selection_points_for_projection(std::shared_ptr<Image_frame> &i
     }
     else
     {
+        // 如果选择使用全部点，则直接保存m_rgb_pts_vec到pts_for_projection容器
         pts_for_projection = m_rgb_pts_vec;
     }
+
+    // 遍历挑选出来的pts_for_projection容器，进一步筛选
     int pts_size = pts_for_projection.size();
     for (int pt_idx = 0; pt_idx < pts_size; pt_idx += skip_step)
     {
+        // 取一个点
         vec_3 pt = pts_for_projection[pt_idx]->get_pos();
+        // 根据与相机的距离阈值判断
         double depth = (pt - image_pose->m_pose_w2c_t).norm();
         if (depth > m_maximum_depth_for_projection)
         {
@@ -564,16 +584,20 @@ void Global_map::selection_points_for_projection(std::shared_ptr<Image_frame> &i
         {
             continue;
         }
+        // 将该点从全局地图坐标系投影到图像上，得到u_f, v_f
         bool res = image_pose->project_3d_point_in_this_img(pt, u_f, v_f, nullptr, 1.0);
         if (res == false)
         {
             continue;
         }
+        // 取整
         u = std::round(u_f / minimum_dis) * minimum_dis; // Why can not work
         v = std::round(v_f / minimum_dis) * minimum_dis;
+        // 检查 (u,v) 这个像素是否已经在mask_depth中有记录， 或者当前 (u,v) 这个像素对应mask_depth.m_map_2d_hash_map的深度更近
         if ((!mask_depth.if_exist(u, v)) || mask_depth.m_map_2d_hash_map[u][v] > depth)
         {
             acc++;
+            // 如果(u,v) 这个像素在mask_index有记录，则清除旧的记录
             if (mask_index.if_exist(u, v))
             {
                 // erase old point
@@ -582,6 +606,7 @@ void Global_map::selection_points_for_projection(std::shared_ptr<Image_frame> &i
                 map_idx_draw_center.erase(map_idx_draw_center.find(old_idx));
                 map_idx_draw_center_raw_pose.erase(map_idx_draw_center_raw_pose.find(old_idx));
             }
+            // 保存这个新的点信息到 map_idx_draw_center 和 map_idx_draw_center_raw_pose
             mask_index.m_map_2d_hash_map[u][v] = (int)pt_idx;
             mask_depth.m_map_2d_hash_map[u][v] = (float)depth;
             map_idx_draw_center[pt_idx] = cv::Point2f(v, u);
@@ -589,8 +614,13 @@ void Global_map::selection_points_for_projection(std::shared_ptr<Image_frame> &i
         }
     }
 
+    // 指针非空
+
+    // 输出: 选中的地图点
     if (pc_out_vec != nullptr)
     {
+        // map_idx_draw_center： std::map<int, cv::Point2f>容器
+        // std::map<pts_for_projection中每个点的索引，该地图点在图像上的像素坐标>
         for (auto it = map_idx_draw_center.begin(); it != map_idx_draw_center.end(); it++)
         {
             // pc_out_vec->push_back(m_rgb_pts_vec[it->first]);
@@ -598,8 +628,11 @@ void Global_map::selection_points_for_projection(std::shared_ptr<Image_frame> &i
         }
     }
 
+    // 输出: 选中的地图点反投影到图像上的坐标
     if (pc_2d_out_vec != nullptr)
     {
+        // map_idx_draw_center： std::map<int, cv::Point2f>容器
+        // std::map<pts_for_projection中每个点的索引，该地图点在图像上的浮点像素坐标>
         for (auto it = map_idx_draw_center.begin(); it != map_idx_draw_center.end(); it++)
         {
             pc_2d_out_vec->push_back(map_idx_draw_center_raw_pose[it->first]);

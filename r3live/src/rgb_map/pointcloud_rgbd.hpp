@@ -156,7 +156,7 @@ struct Global_map
     int                                                          m_map_major_version = R3LIVE_MAP_MAJOR_VERSION;
     int                                                          m_map_minor_version = R3LIVE_MAP_MINOR_VERSION;
     int                                                          m_if_get_all_pts_in_boxes_using_mp = 1;
-    std::vector< RGB_pt_ptr >                    m_rgb_pts_vec;
+    std::vector< RGB_pt_ptr >                    m_rgb_pts_vec; ///< 全局地图点
     // std::vector< RGB_pt_ptr >                    m_rgb_pts_in_recent_visited_voxels;
     std::shared_ptr< std::vector< RGB_pt_ptr> >                  m_pts_rgb_vec_for_projection = nullptr;
     std::shared_ptr< std::mutex >                                m_mutex_pts_vec;
