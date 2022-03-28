@@ -71,9 +71,9 @@ class Rgbmap_tracker
     cv::Mat                    m_old_frame, m_old_gray;
     cv::Mat                    frame_gray, m_current_frame;
     cv::Mat                    m_current_mask;
-    unsigned int               m_frame_idx = 0;
+    unsigned int               m_frame_idx = 0; ///< 光流跟踪过的帧数量
     double                     m_last_frame_time, m_current_frame_time;
-    std::vector< int >         m_current_ids, m_old_ids;
+    std::vector< int >         m_current_ids, m_old_ids;    ///< 存放着与m_last_tracked_pts, m_current_tracked_pts关联的地图点的索引
     int                        if_debug_match_img = 0;
     unsigned int               m_maximum_vio_tracked_pts = 300;
     cv::Mat                    m_ud_map1, m_ud_map2;
@@ -83,7 +83,7 @@ class Rgbmap_tracker
     std::vector< void * >      m_rgb_pts_ptr_vec_in_last_frame; ///< 每个元素都是[地图点内存地址]
     // key = [地图点内存地址]  value = [地图点反投影到图像的像素点坐标]
     std::map< void *, cv::Point2f > m_map_rgb_pts_in_last_frame_pos;
-    std::map< void *, cv::Point2f > m_map_rgb_pts_in_current_frame_pos;
+    std::map< void *, cv::Point2f > m_map_rgb_pts_in_current_frame_pos; ///< 当前帧跟踪到的地图点
 
     std::map< int, std::vector< cv::Point2f > > m_map_id_pts_vec;
     std::map< int, std::vector< int > >         m_map_id_pts_frame;
@@ -192,6 +192,9 @@ class Rgbmap_tracker
     void update_and_append_track_pts( std::shared_ptr< Image_frame > &img_pose, Global_map &map_rgb, double mini_dis = 10.0, int minimum_frame_diff = 3e8 );
     void reject_error_tracking_pts( std::shared_ptr< Image_frame > &img_pose, double dis = 2.0 );
 
+    /**
+     * @brief: 根据跟踪的结果，对容器进行裁减
+     */
     template < typename T > void reduce_vector( std::vector< T > &v, std::vector< uchar > status )
     {
         int j = 0;

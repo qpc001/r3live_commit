@@ -1187,14 +1187,19 @@ void R3LIVE::service_VIO_update()
 
         // 到这里，时间戳小于图像时间的雷达数据都处理完毕了
         StatesGroup state_out;
+        // ??
         m_cam_measurement_weight = std::max( 0.001, std::min( 5.0 / m_number_of_new_visited_voxel, 0.01 ) );
+        // 使用imu数据，预积分到图像帧时间戳
         if ( vio_preintegration( g_lio_state, state_out, img_pose->m_timestamp + g_lio_state.td_ext_i2c ) == false )
         {
+            // 如果图像帧时间戳小于当前状态g_lio_state的时间，则出问题了，直接跳过这帧图像
             m_mutex_lio_process.unlock();
             continue;
         }
+        // 取预积分后的状态，设置img_pose
         set_image_pose( img_pose, state_out );
 
+        // 这里的track_img注意与 LK_optical_flow_kernel::track_image区分
         op_track.track_img( img_pose, -20 );
         g_cost_time_logger.record( tim, "Track_img" );
         // cout << "Track_img cost " << tim.toc( "Track_img" ) << endl;

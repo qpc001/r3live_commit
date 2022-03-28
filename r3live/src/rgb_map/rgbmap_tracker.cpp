@@ -232,16 +232,18 @@ void Rgbmap_tracker::reject_error_tracking_pts( std::shared_ptr< Image_frame > &
 void Rgbmap_tracker::track_img( std::shared_ptr< Image_frame > &img_pose, double dis, int if_use_opencv )
 {
     Common_tools::Timer tim;
-    m_current_frame = img_pose->m_img;
+    m_current_frame = img_pose->m_img;  // 取图像
     m_current_frame_time = img_pose->m_timestamp;
-    m_map_rgb_pts_in_current_frame_pos.clear();
-    if ( m_current_frame.empty() )
+    m_map_rgb_pts_in_current_frame_pos.clear(); //当前帧跟踪到的地图点
+    if ( m_current_frame.empty() )  // 检查图像是否为空
         return;
-    cv::Mat frame_gray = img_pose->m_img_gray;
+    cv::Mat frame_gray = img_pose->m_img_gray;  // 取灰度图
     tim.tic( "HE" );
     tim.tic( "opTrack" );
     std::vector< uchar > status;
     std::vector< float > err;
+    // 取上一帧跟踪的像素点，并检查数量是否足够
+    // TODO: 如果跟踪到的像素点越来越少怎么办？
     m_current_tracked_pts = m_last_tracked_pts;
     int before_track = m_last_tracked_pts.size();
     if ( m_last_tracked_pts.size() < 30 )
@@ -250,35 +252,48 @@ void Rgbmap_tracker::track_img( std::shared_ptr< Image_frame > &img_pose, double
         return;
     }
 
+    // 调用LK_optical_flow_kernel::track_image，光流跟踪，输出跟踪后的像素点m_current_tracked_pts
     m_lk_optical_flow_kernel->track_image( frame_gray, m_last_tracked_pts, m_current_tracked_pts, status, 2 );
-    reduce_vector( m_last_tracked_pts, status );
-    reduce_vector( m_old_ids, status );
-    reduce_vector( m_current_tracked_pts, status );
+    // 根据跟踪的结果，对容器进行裁减
+    reduce_vector( m_last_tracked_pts, status );    // 成功跟踪的上一帧的点
+    reduce_vector( m_old_ids, status );             // 成功跟踪的上一帧像素点所对应的地图点idx
+    reduce_vector( m_current_tracked_pts, status ); // 当前帧成功跟踪的点
 
     int     after_track = m_last_tracked_pts.size();
     cv::Mat mat_F;
 
     tim.tic( "Reject_F" );
     unsigned int pts_before_F = m_last_tracked_pts.size();
+    // 求基础矩阵F
     mat_F = cv::findFundamentalMat( m_last_tracked_pts, m_current_tracked_pts, cv::FM_RANSAC, 1.0, 0.997, status );
     unsigned int size_a = m_current_tracked_pts.size();
+    // 根据求解F矩阵的RANSAC结果，去除outliers
     reduce_vector( m_last_tracked_pts, status );
     reduce_vector( m_old_ids, status );
     reduce_vector( m_current_tracked_pts, status );
 
     m_map_rgb_pts_in_current_frame_pos.clear();
+    // 距离上一次跟踪的时间
     double frame_time_diff = ( m_current_frame_time - m_last_frame_time );
+    // 遍历跟踪成功的点，保存像素点坐标以及跟踪到的速度
     for ( uint i = 0; i < m_last_tracked_pts.size(); i++ )
     {
+        // 用于跳过靠近图像边缘的点
         if ( img_pose->if_2d_points_available( m_current_tracked_pts[ i ].x, m_current_tracked_pts[ i ].y, 1.0, 0.05 ) )
         {
+            // m_rgb_pts_ptr_vec_in_last_frame[ m_old_ids[ i ] ]表示索引为 i 的地图点的指针
+            // 这里将地图点转化为RGB_pts指针
             RGB_pts *rgb_pts_ptr = ( ( RGB_pts * ) m_rgb_pts_ptr_vec_in_last_frame[ m_old_ids[ i ] ] );
+            // 保存当前帧跟踪到的地图点
             m_map_rgb_pts_in_current_frame_pos[ rgb_pts_ptr ] = m_current_tracked_pts[ i ];
+            // 计算像素点速度
             cv::Point2f pt_img_vel = ( m_current_tracked_pts[ i ] - m_last_tracked_pts[ i ] ) / frame_time_diff;
-            rgb_pts_ptr->m_img_pt_in_last_frame = vec_2( m_last_tracked_pts[ i ].x, m_last_tracked_pts[ i ].y );
+            // 保存数据到地图点
+            rgb_pts_ptr->m_img_pt_in_last_frame =
+                    vec_2( m_last_tracked_pts[ i ].x, m_last_tracked_pts[ i ].y );  // 成功跟踪的上一帧点
             rgb_pts_ptr->m_img_pt_in_current_frame =
-                vec_2( m_current_tracked_pts[ i ].x, m_current_tracked_pts[ i ].y );
-            rgb_pts_ptr->m_img_vel = vec_2( pt_img_vel.x, pt_img_vel.y );
+                vec_2( m_current_tracked_pts[ i ].x, m_current_tracked_pts[ i ].y );// 成功跟踪的当前帧点
+            rgb_pts_ptr->m_img_vel = vec_2( pt_img_vel.x, pt_img_vel.y );   // 像素点移动速度
         }
     }
 
@@ -287,9 +302,16 @@ void Rgbmap_tracker::track_img( std::shared_ptr< Image_frame > &img_pose, double
         reject_error_tracking_pts( img_pose, dis );
     }
 
+    // 保存图像帧
     m_old_gray = frame_gray.clone();
     m_old_frame = m_current_frame;
+    // 保存当前帧跟踪到的地图点
     m_map_rgb_pts_in_last_frame_pos = m_map_rgb_pts_in_current_frame_pos;
+    // 遍历当前帧跟踪到的地图点,更新如下容器:
+    // - m_last_tracked_pts 成功跟踪的上一帧点
+    // - m_rgb_pts_ptr_vec_in_last_frame 成功跟踪的上一帧点对应的地图点容器
+    // - m_colors
+    // - m_old_ids 成功跟踪的上一帧点对应的地图点索引
     update_last_tracking_vector_and_ids();
 
     m_frame_idx++;

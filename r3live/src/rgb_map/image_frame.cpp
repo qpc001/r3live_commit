@@ -171,6 +171,15 @@ bool Image_frame::project_3d_to_2d(const pcl::PointXYZI & in_pt, Eigen::Matrix3d
     return true;
 }
 
+/**
+ * @brief Image_frame::if_2d_points_available
+ * 用于跳过靠近图像边缘的点
+ * @param u
+ * @param v
+ * @param scale
+ * @param fov_mar
+ * @return
+ */
 bool Image_frame::if_2d_points_available(const double &u, const double &v, const double &scale, double fov_mar)
 {
     double used_fov_margin = m_fov_margin;
