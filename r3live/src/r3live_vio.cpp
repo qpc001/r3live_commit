@@ -1200,6 +1200,7 @@ void R3LIVE::service_VIO_update()
         set_image_pose( img_pose, state_out );
 
         // 这里的track_img注意与 LK_optical_flow_kernel::track_image区分
+        // 光流跟踪，同时去除outliers
         op_track.track_img( img_pose, -20 );
         g_cost_time_logger.record( tim, "Track_img" );
         // cout << "Track_img cost " << tim.toc( "Track_img" ) << endl;

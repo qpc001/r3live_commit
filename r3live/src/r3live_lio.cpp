@@ -569,7 +569,7 @@ int R3LIVE::service_LIO_update()
             // printf_line;
             Common_tools::Timer tim;
             
-            // 将激光数据和IMU数据保存到MeasureGroup &meas
+            // 将激光数据和IMU数据保存到MeasureGroup Measures
             if ( sync_packages( Measures ) == 0 )
             {
                 continue;
@@ -715,6 +715,7 @@ int R3LIVE::service_LIO_update()
                         PointType &pointSel_tmpt = feats_down_updated->points[ i ];
 
                         /* transform to world frame */
+                        // 利用g_lio_state将点转换到世界坐标系
                         pointBodyToWorld( &pointOri_tmpt, &pointSel_tmpt );
                         std::vector< float > pointSearchSqDis_surf;
 
@@ -820,6 +821,7 @@ int R3LIVE::service_LIO_update()
                         }
                         pca_time += omp_get_wtime() - pca_start;
                     }
+                    // 到这里，计算残差、雅可比完成
                     tim.tic( "Stack" );
                     double total_residual = 0.0;
                     laserCloudSelNum = 0;
@@ -874,6 +876,7 @@ int R3LIVE::service_LIO_update()
                         /*** Measuremnt: distance to the closest surface/corner ***/
                         meas_vec( i ) = -norm_p.intensity;
                     }
+                    // 构造H矩阵，b矩阵，完成
 
                     Eigen::Vector3d                           rot_add, t_add, v_add, bg_add, ba_add, g_add;
                     Eigen::Matrix< double, DIM_OF_STATES, 1 > solution;
@@ -895,7 +898,12 @@ int R3LIVE::service_LIO_update()
                             ( H_T_H + ( g_lio_state.cov / LASER_POINT_COV ).inverse() ).inverse();
                         K = K_1.block< DIM_OF_STATES, 6 >( 0, 0 ) * Hsub_T;
 
+                        // state_propagate: 开始迭代之前的状态，即由imu推算的结果
+                        // g_lio_state: 每次迭代都会更新的状态
                         auto vec = state_propagate - g_lio_state;
+                        // meas_vec: 残差
+                        // solution: 这里计算的是可以+到（开始迭代之前的状态）的量，与FAST-LIO2中的迭代有点不一样
+                        // FAST-LIO2中计算的可以直接+到每一次迭代后的状态的量
                         solution = K * ( meas_vec - Hsub * vec.block< 6, 1 >( 0, 0 ) );
                         // double speed_delta = solution.block( 0, 6, 3, 1 ).norm();
                         // if(solution.block( 0, 6, 3, 1 ).norm() > 0.05 )
@@ -903,9 +911,15 @@ int R3LIVE::service_LIO_update()
                         //     solution.block( 0, 6, 3, 1 ) = solution.block( 0, 6, 3, 1 ) / speed_delta * 0.05;
                         // }
 
+                        // 更新g_lio_state， 更新方式为: 开始迭代之前的状态 + 求解的误差状态量
+                        // FAST-LIO2的更新方式为: 每次迭代的状态 + 每次迭代的误差状态量
+                        // TODO: 这是不是有问题？ solution每次迭代的变化是怎样的?
+                        // 这里的目标是通过迭代来求出更加准确的误差状态量(总的)??
+                        // 而FAST-LIO2的目标是通过利用迭代求出误差状态量来不断更新状态，然后再迭代，再更新
                         g_lio_state = state_propagate + solution;
                         print_dash_board();
                         // cout << ANSI_COLOR_RED_BOLD << "Run EKF uph, vec = " << vec.head<9>().transpose() << ANSI_COLOR_RESET << endl;
+                        // 计算增量，用于判断是否收敛
                         rot_add = solution.block< 3, 1 >( 0, 0 );
                         t_add = solution.block< 3, 1 >( 3, 0 );
                         flg_EKF_converged = false;
@@ -925,16 +939,20 @@ int R3LIVE::service_LIO_update()
 
                     /*** Rematch Judgement ***/
                     rematch_en = false;
+                    // 如果本轮ekf收敛，或者重匹配次数rematch_num为0
                     if ( flg_EKF_converged || ( ( rematch_num == 0 ) && ( iterCount == ( NUM_MAX_ITERATIONS - 2 ) ) ) )
                     {
+                        // 启动重匹配
                         rematch_en = true;
                         rematch_num++;
                     }
 
                     /*** Convergence Judgements and Covariance Update ***/
                     // if (rematch_num >= 10 || (iterCount == NUM_MAX_ITERATIONS - 1))
+                    // 如果重匹配次数>=2，或者迭代次数达到最大值
                     if ( rematch_num >= 2 || ( iterCount == NUM_MAX_ITERATIONS - 1 ) ) // Fast lio ori version.
                     {
+                        // 更新g_lio_state协方差，标准卡尔曼公式
                         if ( flg_EKF_inited )
                         {
                             /*** Covariance Update ***/
@@ -946,6 +964,7 @@ int R3LIVE::service_LIO_update()
                             // std::cout << "position: " << g_lio_state.pos_end.transpose() << " total distance: " << total_distance << std::endl;
                         }
                         solve_time += omp_get_wtime() - solve_start;
+                        // 跳出迭代循环
                         break;
                     }
                     solve_time += omp_get_wtime() - solve_start;
@@ -959,6 +978,7 @@ int R3LIVE::service_LIO_update()
                 t3 = omp_get_wtime();
 
                 /*** add new frame points to map ikdtree ***/
+                // ？？？
                 PointVector points_history;
                 ikdtree.acquire_removed_points( points_history );
 
@@ -986,13 +1006,16 @@ int R3LIVE::service_LIO_update()
                     }
                 }
 
+                // 遍历降采样后的平面点
                 for ( int i = 0; i < feats_down_size; i++ )
                 {
                     /* transform to world frame */
+                    // 转换到世界坐标系
                     pointBodyToWorld( &( feats_down->points[ i ] ), &( feats_down_updated->points[ i ] ) );
                 }
                 t4 = omp_get_wtime();
                
+                // 添加当前帧降采样后的平面点到LIO地图
                 ikdtree.Add_Points( feats_down_updated->points, true );
                 
                 kdtree_incremental_time = omp_get_wtime() - t4 + readd_time + readd_box_time + delete_box_time;
@@ -1027,20 +1050,25 @@ int R3LIVE::service_LIO_update()
                 Common_tools::Timer          tim;
                 // tim.tic();
                 // ANCHOR - RGB maps update
+                // 等待更新渲染RGB地图
                 wait_render_thread_finish();
+                // 如果记录MVS数据（后面用于重建mesh）
                 if ( m_if_record_mvs )
                 {
+                    // 如果记录MVS数据，在添加点到地图时，同时输出 最新击中的voxel点，保存到pts_last_hitted
                     std::vector< std::shared_ptr< RGB_pts > > pts_last_hitted;
                     pts_last_hitted.reserve( 1e6 );
+                    // 添加RGB地图点到全局地图(VIO也用的地图)
                     m_number_of_new_visited_voxel = m_map_rgb_pts.append_points_to_global_map(
                         *laserCloudFullResColor, Measures.lidar_end_time - g_camera_lidar_queue.m_first_imu_time, &pts_last_hitted,
                         m_append_global_map_point_step );
                     m_map_rgb_pts.m_mutex_pts_last_visited->lock();
-                    m_map_rgb_pts.m_pts_last_hitted = pts_last_hitted;
+                    m_map_rgb_pts.m_pts_last_hitted = pts_last_hitted;  //最新击中的voxel点
                     m_map_rgb_pts.m_mutex_pts_last_visited->unlock();
                 }
                 else
                 {
+                    // 添加RGB地图点到全局地图
                     m_number_of_new_visited_voxel = m_map_rgb_pts.append_points_to_global_map(
                         *laserCloudFullResColor, Measures.lidar_end_time - g_camera_lidar_queue.m_first_imu_time, nullptr,
                         m_append_global_map_point_step );
@@ -1066,6 +1094,7 @@ int R3LIVE::service_LIO_update()
             }
 
             /******* Publish Maps:  *******/
+            // 发布与当前帧激光平面点关联的地图平面点
             sensor_msgs::PointCloud2 laserCloudMap;
             pcl::toROSMsg( *featsFromMap, laserCloudMap );
             laserCloudMap.header.stamp.fromSec( Measures.lidar_end_time ); // ros::Time().fromSec(last_timestamp_lidar);

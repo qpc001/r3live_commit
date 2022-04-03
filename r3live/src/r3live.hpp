@@ -155,7 +155,7 @@ public:
     /// IMU relative variables
     std::mutex mtx_buffer;
     std::condition_variable sig_buffer;
-    bool lidar_pushed = false;
+    bool lidar_pushed = false;  ///< 标志位，如果正在同步（lidar/imu）数据sync_packages时，如果已经填入了lidar数据，则设置为true，后面就填imu数据即可
     bool flg_exit = false;
     bool flg_reset = false;
 
