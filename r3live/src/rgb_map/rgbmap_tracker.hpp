@@ -73,17 +73,21 @@ class Rgbmap_tracker
     cv::Mat                    m_current_mask;
     unsigned int               m_frame_idx = 0; ///< 光流跟踪过的帧数量
     double                     m_last_frame_time, m_current_frame_time;
+    // m_old_ids: 在update_last_tracking_vector_and_ids()函数中更新， 内容为: [0,1,2,3...], 没什么卵用? 因为 m_old_ids[0] = 0, m_old_ids[1] = 1, ...
+    // 存放着 m_map_rgb_pts_in_last_frame_pos 容器 对应于 m_rgb_pts_ptr_vec_in_last_frame、m_last_tracked_pts的关联索引
+    // 即 m_map_rgb_pts_in_last_frame_pos[m_old_ids[idx]] = < m_rgb_pts_ptr_vec_in_last_frame[m_old_ids[idx]], m_last_tracked_pts[m_old_ids[idx]] >
     std::vector< int >         m_current_ids, m_old_ids;    ///< 存放着与m_last_tracked_pts, m_current_tracked_pts关联的地图点的索引
     int                        if_debug_match_img = 0;
     unsigned int               m_maximum_vio_tracked_pts = 300;
     cv::Mat                    m_ud_map1, m_ud_map2;
     cv::Mat                    m_intrinsic, m_dist_coeffs;
-    std::vector< cv::Point2f > m_last_tracked_pts, m_current_tracked_pts;   ///< 跟踪像素点坐标
+    // m_last_tracked_pts: 成功跟踪的上一帧的像素点, 在update_last_tracking_vector_and_ids()函数中更新，更新的方式就是把m_map_rgb_pts_in_last_frame_pos中的value保存下来
+    std::vector< cv::Point2f > m_last_tracked_pts, m_current_tracked_pts;   ///< 跟踪像素点坐标, m_current_tracked_pts: 当前帧成功跟踪的点
     std::vector< cv::Scalar >  m_colors;
-    std::vector< void * >      m_rgb_pts_ptr_vec_in_last_frame; ///< 每个元素都是[地图点内存地址]
+    std::vector< void * >      m_rgb_pts_ptr_vec_in_last_frame; ///< 存放上一帧跟踪到的地图点的指针， 每个元素都是[地图点内存地址], 在update_last_tracking_vector_and_ids()函数中更新，更新的方式就是把m_map_rgb_pts_in_last_frame_pos中的key保存下来
     // key = [地图点内存地址]  value = [地图点反投影到图像的像素点坐标]
-    std::map< void *, cv::Point2f > m_map_rgb_pts_in_last_frame_pos;
-    std::map< void *, cv::Point2f > m_map_rgb_pts_in_current_frame_pos; ///< 当前帧跟踪到的地图点
+    std::map< void *, cv::Point2f > m_map_rgb_pts_in_last_frame_pos;    ///< key: 上一帧跟踪地图点指针， value: 该地图点对应上一帧的像素点坐标
+    std::map< void *, cv::Point2f > m_map_rgb_pts_in_current_frame_pos; ///< key: 当前帧跟踪到的地图点指针， value: 对应当前帧的像素点坐标
 
     std::map< int, std::vector< cv::Point2f > > m_map_id_pts_vec;
     std::map< int, std::vector< int > >         m_map_id_pts_frame;

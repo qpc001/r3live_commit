@@ -1208,6 +1208,7 @@ void R3LIVE::service_VIO_update()
         set_image_pose( img_pose, state_out );
 
         // ANCHOR -  remove point using PnP.
+        // Pnp求解，然后更新img_pose
         if ( op_track.remove_outlier_using_ransac_pnp( img_pose ) == 0 )
         {
             cout << ANSI_COLOR_RED_BOLD << "****** Remove_outlier_using_ransac_pnp error*****" << ANSI_COLOR_RESET << endl;
@@ -1215,6 +1216,7 @@ void R3LIVE::service_VIO_update()
         g_cost_time_logger.record( tim, "Ransac" );
         tim.tic( "Vio_f2f" );
         bool res_esikf = true, res_photometric = true;
+        // 等待RGB地图渲染线程
         wait_render_thread_finish();
         res_esikf = vio_esikf( state_out, op_track );
         g_cost_time_logger.record( tim, "Vio_f2f" );
