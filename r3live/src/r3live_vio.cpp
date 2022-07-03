@@ -629,11 +629,12 @@ bool      R3LIVE::vio_esikf( StatesGroup &state_in, Rgbmap_tracker &op_track )
     tim.tic();
     scope_color( ANSI_COLOR_BLUE_BOLD );
     StatesGroup state_iter = state_in;
+    // 不估计内参，直接将已知内参保存到state_iter
     if ( !m_if_estimate_intrinsic ) // When disable the online intrinsic calibration.
     {
         state_iter.cam_intrinsic << g_cam_K( 0, 0 ), g_cam_K( 1, 1 ), g_cam_K( 0, 2 ), g_cam_K( 1, 2 );
     }
-
+    // 不估计外参
     if ( !m_if_estimate_i2c_extrinsic )
     {
         state_iter.pos_ext_i2c = m_inital_pos_ext_i2c;
@@ -649,18 +650,21 @@ bool      R3LIVE::vio_esikf( StatesGroup &state_in, Rgbmap_tracker &op_track )
 
     Eigen::SparseMatrix< double > H_mat_spa, H_T_H_spa, K_spa, KH_spa, vec_spa, I_STATE_spa;
     I_STATE.setIdentity();
-    I_STATE_spa = I_STATE.sparseView();
+    I_STATE_spa = I_STATE.sparseView(); // sparseView: 删除了零值或太小的值的密集或稀疏矩阵的表达式
     double fx, fy, cx, cy, time_td;
 
     int                   total_pt_size = op_track.m_map_rgb_pts_in_current_frame_pos.size();
     std::vector< double > last_reprojection_error_vec( total_pt_size ), current_reprojection_error_vec( total_pt_size );
 
+    // 如果当前帧跟踪到的地图点数小于 阈值，直接return
     if ( total_pt_size < minimum_iteration_pts )
     {
         state_in = state_iter;
         return false;
     }
+    // h矩阵维度 ( 2*跟踪到地图点数 x 状态维度)
     H_mat.resize( total_pt_size * 2, DIM_OF_STATES );
+    // 残差维度 ( 2*跟踪到地图点数 x 1) , 残差： 重投影误差(x/y)
     meas_vec.resize( total_pt_size * 2, 1 );
     double last_repro_err = 3e8;
     int    avail_pt_count = 0;
@@ -668,14 +672,16 @@ bool      R3LIVE::vio_esikf( StatesGroup &state_in, Rgbmap_tracker &op_track )
 
     double acc_reprojection_error = 0;
     double img_res_scale = 1.0;
+    // 开始迭代
     for ( int iter_count = 0; iter_count < esikf_iter_times; iter_count++ )
     {
 
         // cout << "========== Iter " << iter_count << " =========" << endl;
         mat_3_3 R_imu = state_iter.rot_end;
         vec_3   t_imu = state_iter.pos_end;
+        // 将点从相机坐标系到世界坐标系的变换
         vec_3   t_c2w = R_imu * state_iter.pos_ext_i2c + t_imu;
-        mat_3_3 R_c2w = R_imu * state_iter.rot_ext_i2c; // world to camera frame
+        mat_3_3 R_c2w = R_imu * state_iter.rot_ext_i2c;
 
         fx = state_iter.cam_intrinsic( 0 );
         fy = state_iter.cam_intrinsic( 1 );
@@ -683,6 +689,7 @@ bool      R3LIVE::vio_esikf( StatesGroup &state_in, Rgbmap_tracker &op_track )
         cy = state_iter.cam_intrinsic( 3 );
         time_td = state_iter.td_ext_i2c_delta;
 
+        // 将点从世界坐标系到相机坐标系的变换
         vec_3   t_w2c = -R_c2w.transpose() * t_c2w;
         mat_3_3 R_w2c = R_c2w.transpose();
         int     pt_idx = -1;
@@ -695,13 +702,20 @@ bool      R3LIVE::vio_esikf( StatesGroup &state_in, Rgbmap_tracker &op_track )
         solution.setZero();
         meas_vec.setZero();
         avail_pt_count = 0;
+        // 遍历当前帧跟踪到的地图点
         for ( auto it = op_track.m_map_rgb_pts_in_last_frame_pos.begin(); it != op_track.m_map_rgb_pts_in_last_frame_pos.end(); it++ )
         {
+            // 取地图坐标系中的地图点坐标
             pt_3d_w = ( ( RGB_pts * ) it->first )->get_pos();
+            // 跟踪像素点的速度
             pt_img_vel = ( ( RGB_pts * ) it->first )->m_img_vel;
+            // 该地图点对应于上一帧的像素点坐标
             pt_img_measure = vec_2( it->second.x, it->second.y );
+            // 将地图点从世界坐标系变换到当前帧相机坐标系
             pt_3d_cam = R_w2c * pt_3d_w + t_w2c;
+            // 利用相机模型以及估计的相机-imu时间偏差导致的增量，得到地图点在当前帧图像的投影像素坐标 pt_img_proj
             pt_img_proj = vec_2( fx * pt_3d_cam( 0 ) / pt_3d_cam( 2 ) + cx, fy * pt_3d_cam( 1 ) / pt_3d_cam( 2 ) + cy ) + time_td * pt_img_vel;
+            // 计算重投影误差，这里计算的是误差的大小，不用于迭代求解，只是用来确定huber核函数
             double repro_err = ( pt_img_proj - pt_img_measure ).norm();
             double huber_loss_scale = get_huber_loss_scale( repro_err );
             pt_idx++;

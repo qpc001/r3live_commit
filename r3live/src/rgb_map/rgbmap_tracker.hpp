@@ -86,7 +86,7 @@ class Rgbmap_tracker
     std::vector< cv::Scalar >  m_colors;
     std::vector< void * >      m_rgb_pts_ptr_vec_in_last_frame; ///< 存放上一帧跟踪到的地图点的指针， 每个元素都是[地图点内存地址], 在update_last_tracking_vector_and_ids()函数中更新，更新的方式就是把m_map_rgb_pts_in_last_frame_pos中的key保存下来
     // key = [地图点内存地址]  value = [地图点反投影到图像的像素点坐标]
-    std::map< void *, cv::Point2f > m_map_rgb_pts_in_last_frame_pos;    ///< key: 上一帧跟踪地图点指针， value: 该地图点对应上一帧的像素点坐标
+    std::map< void *, cv::Point2f > m_map_rgb_pts_in_last_frame_pos;    ///< key: 当前帧跟踪到的地图点， value: 该地图点对应上一帧的像素点坐标
     std::map< void *, cv::Point2f > m_map_rgb_pts_in_current_frame_pos; ///< key: 当前帧跟踪到的地图点指针， value: 对应当前帧的像素点坐标
 
     std::map< int, std::vector< cv::Point2f > > m_map_id_pts_vec;
